@@ -1,0 +1,24 @@
+services:
+    ngrok:
+        platform: linux/amd64
+    mailhog:
+        platform: linux/amd64
+    selenium_chrome:
+        platform: linux/amd64
+    traefik:
+        platform: linux/amd64
+    redis:
+        platform: linux/arm64
+    mysql:
+        platform: linux/amd64
+    elasticsearch:
+        platform: linux/arm64
+        environment:
+            - "ES_JAVA_OPTS=-Xms256M -Xmx256M"
+            - "xpack.security.enabled=false"
+            - "discovery.type=single-node"
+    kibana:
+        platform: linux/arm64
+    nginx:
+        labels:
+            - "traefik.http.services.nginx.loadbalancer.server.port=80"

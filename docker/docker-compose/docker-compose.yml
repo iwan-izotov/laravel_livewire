@@ -1,0 +1,225 @@
+services:
+
+    php_fpm:
+        build:
+            context: ./docker
+            dockerfile: ./php/fpm/Dockerfile
+            args:
+                - XDEBUG_REMOTE_HOST=${XDEBUG_REMOTE_HOST}
+                - XDEBUG_REMOTE_PORT=${XDEBUG_REMOTE_PORT}
+                - MAILHOG_IP=${MAILHOG_IP}
+                - TIMEZONE=${TIMEZONE}
+                - PHP_FPM_UID=${PHP_FPM_UID}
+                - PHP_FPM_GUID=${PHP_FPM_GUID}
+                - PHP_FPM_USER=${PHP_FPM_USER}
+                - PHP_FPM_GROUP=${PHP_FPM_GROUP}
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_php_fpm
+        env_file:
+            - ./docker/env//main.env
+            - ./docker/env/.env
+        environment:
+            PHP_IDE_CONFIG: "serverName=docker"
+            XDEBUG_SESSION: PHPSTORM
+        volumes:
+            - type: bind
+              source: ./
+              target: /var/www/shop
+            - ./docker/php/deployer:/home/deployer/.ssh/
+        extra_hosts:
+            - ${DOMEN_2_LEVEL}.local:${NGINX_IP}
+        networks:
+            backend:
+                ipv4_address: ${PHP_FPM_IP}
+        labels:
+            - "traefik.enable=false"
+
+    nginx:
+        build:
+            context: ./docker
+            dockerfile: ./nginx/Dockerfile
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_nginx
+        env_file:
+            - ./docker/env/main.env
+            - ./docker/env/.env
+        environment:
+            DOMEN_2_LEVEL: ${DOMEN_2_LEVEL}
+        depends_on:
+            - php_fpm
+        volumes:
+            - type: bind
+              source: ./docker/nginx/default.conf.template
+              target: /etc/nginx/templates/default.conf.template
+            - type: bind
+              source: ./
+              target: /var/www/shop
+            - type: bind
+              source: ./docker/nginx/log
+              target: /var/log/nginx
+        networks:
+            backend:
+                ipv4_address: ${NGINX_IP}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+            - "traefik.http.routers.nginx-http.entrypoints=web"
+            - "traefik.http.routers.nginx-http.rule=HostRegexp(`{tmp:^${DOMEN_2_LEVEL}.+}`)"
+            # Убран редирект c http на https. Как нормально настроим сертификат, можно будет включить его. (сразуже можно будет включить и Secure куки)
+            #- "traefik.http.routers.nginx-http.middlewares=redirect-to-https@docker"
+            - "traefik.http.routers.nginx-https.entrypoints=websecure"
+            - "traefik.http.routers.nginx-https.rule=HostRegexp(`{tmp:^${DOMEN_2_LEVEL}.+}`)"
+            - "traefik.http.routers.nginx-https.tls=true"
+            - "custom.label=${PROJECT_NAME}"
+
+    mysql:
+        image: "mysql:8-debian"
+        command: --default-authentication-plugin=mysql_native_password
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_mysql
+        env_file:
+            - ./docker/env//main.env
+        volumes:
+            - type: volume
+              source: dbdata
+              target: /var/lib/mysql
+            - type: bind
+              source: ./docker/mysql/custom.cnf
+              target: /etc/mysql/conf.d/custom.cnf
+        environment:
+            MYSQL_DATABASE: app
+            MYSQL_ROOT_PASSWORD: 55555
+            TZ: ${TIMEZONE}
+        networks:
+            backend:
+                ipv4_address: ${MYSQL_IP}
+        labels:
+            - "traefik.enable=false"
+
+    # Login:admin Password:password
+    portainer:
+        image: portainer/portainer:latest
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_portainer
+        restart: always
+        command: --admin-password '$$2y$$05$$arC5e4UbRPxfR68jaFnAAe1aL7C1U03pqfyQh49/9lB9lqFxLfBqS' -H unix:///var/run/docker.sock
+        volumes:
+            - type: bind
+              source: /var/run/docker.sock
+              target: /var/run/docker.sock
+        networks:
+            backend:
+                ipv4_address: ${PORTAINER_IP}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.portainer.rule=HostRegexp(`{tmp:^portainer.+}`)"
+            - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+            - "traefik.http.routers.portainer.entrypoints=web"
+            - "custom.label=${PROJECT_NAME}"
+
+    mailhog:
+        image: mailhog/mailhog
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_mailhog
+        networks:
+            backend:
+                ipv4_address: ${MAILHOG_IP}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.mailhog.rule=HostRegexp(`{tmp:^mailhog.+}`)"
+            - "traefik.http.services.mailhog.loadbalancer.server.port=8025"
+            - "traefik.http.routers.mailhog.entrypoints=web"
+            - "custom.label=${PROJECT_NAME}"
+
+    traefik:
+        image: traefik:v2.9
+        restart: always
+        command:
+            - "--api.insecure=true"
+            - "--providers.docker=true"
+            - "--providers.docker.exposedbydefault=false"
+            - "--entrypoints.web.address=:80"
+            - "--entrypoints.websecure.address=:443"
+            - "--providers.file.filename=/traefik/traefik.yaml"
+            - "--providers.docker.constraints=Label(`custom.label`,`${PROJECT_NAME}`)"
+        container_name: ${PROJECT_NAME}_traefik
+        hostname: ${PROJECT_NAME}
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            backend:
+                ipv4_address: ${TRAEFIK_IP}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.traefik.rule=HostRegexp(`{tmp:^traefik.+}`)"
+            - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+            - "traefik.http.routers.traefik.entrypoints=web"
+            - "custom.label=${PROJECT_NAME}"
+
+    memcached:
+        image: memcached:latest
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_memcached
+        command:
+            - '-m 64'
+        networks:
+            backend:
+                ipv4_address: ${MEMCACHED_IP}
+        labels:
+            - "traefik.enable=false"
+
+    redis:
+        image: redis:latest
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_redis
+        command: --requirepass ${REDIS_PASSWORD}
+        volumes:
+            - type: volume
+              source: redisdata
+              target: /data
+        networks:
+            backend:
+                ipv4_address: ${REDIS_IP}
+        labels:
+            - "traefik.enable=false"
+
+    redis-webui:
+        image: erikdubbelboer/phpredisadmin:latest
+        restart: always
+        hostname: ${PROJECT_NAME}
+        container_name: ${PROJECT_NAME}_redis-webui
+        environment:
+            - ADMIN_USER=root
+            - ADMIN_PASS=55555
+            - REDIS_1_HOST=redis
+            - REDIS_1_PORT=6379
+            - REDIS_1_AUTH=${REDIS_PASSWORD}
+        networks:
+            backend:
+                ipv4_address: ${REDIS_WEBUI_IP}
+        depends_on:
+            - redis
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.redis.rule=HostRegexp(`{tmp:^redis.+}`)"
+            - "traefik.http.services.redis.loadbalancer.server.port=80"
+            - "traefik.http.routers.redis.entrypoints=web"
+            - "custom.label=${PROJECT_NAME}"
+
+volumes:
+    dbdata:
+    redisdata:
+
+
+networks:
+    backend:
+        ipam:
+            driver: default
+            config:
+                - subnet: "${NETWORKS_SUBNET}"

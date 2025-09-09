@@ -1,0 +1,25 @@
+services:
+
+  memcached:
+    ports:
+      - "11211:11211"
+  mysql:
+    ports:
+      - "3306:3306"
+  elasticsearch:
+    ports:
+      - "9200:9200"
+  ngrok:
+    ports:
+      - "4040:4040"
+  traefik:
+    ports:
+      - "80:80"
+      - "443:443"
+  redis:
+    ports:
+      - "6379:6379"
+
+  selenium_chrome:
+    ports:
+      - "7900:7900"
